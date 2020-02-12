@@ -38,18 +38,18 @@ def createLocal(listType):
 		file = open(fileName,"w+")
 		
 		for item in database:
+			id = item[0]
+			name = item[1]
+			image = item[2]
+			
 			#Skip 404
-			if item[1] == '_404_' or item[2] == '_404_':
+			if name == '_404_' or image == '_404_':
 				continue
 			
-			#Set Variables
-			id = item[0]
-			
-			if item[2] == '_null_':
+			#Set Image to placeholder if not valid URL
+			if 'cdn.myanimelist.net' not in image:
 				image = 'https://cdn.myanimelist.net/r/96x136/images/qm_50.gif?s=3f32c5b34005de86599954f2656b9482'
-			else:
-				image = item[2]
-				
+			
 			#Begin Writing
 			cssLine = presets[preset].format(type = listType, id = id, image = image)
 			file.write(cssLine)
