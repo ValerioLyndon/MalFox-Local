@@ -1,9 +1,17 @@
 import sqlite3
+import os
 
 # Begin Connection
 
 conn = sqlite3.connect('../database/covers.db')
 c = conn.cursor()
+
+# Create directory if not exist
+
+subdir = 'reference_lists'
+
+if subdir not in os.listdir():
+	os.mkdir(subdir)
 
 # Write to file
 
@@ -34,7 +42,7 @@ def createLocal(listType):
 	database = c.fetchall()
 	
 	for preset in presets:
-		fileName = "reference_lists/%slist_%s.css" % (listType, preset)
+		fileName = subdir + '/%slist_%s.css' % (listType, preset)
 		file = open(fileName,"w+")
 		
 		for item in database:
