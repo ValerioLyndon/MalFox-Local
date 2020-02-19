@@ -3,3 +3,4 @@
 reference_lists
 *.db
 *.db-journal
+logs
