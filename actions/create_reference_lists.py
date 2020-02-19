@@ -38,7 +38,12 @@ def createLocal(listType):
 		'more': '#more{id}{{background-image:url({image})}}\n'
 	}
 	
-	c.execute('SELECT id, name, image FROM %s ORDER BY id ASC' % listType)
+	c.execute('''
+		SELECT id, name, image
+		FROM data
+		WHERE type="%s"
+		ORDER BY id ASC
+	''' % listType)
 	database = c.fetchall()
 	
 	for preset in presets:

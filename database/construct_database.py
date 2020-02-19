@@ -4,9 +4,6 @@ timeFormat = '%Y-%m-%d %H:%M:%S.%f'
 
 #IMPORTS
 
-#Generic
-import func
-
 #Database
 import sqlite3
 
@@ -37,8 +34,15 @@ def decodeString(s):
 conn = sqlite3.connect('covers.db')
 c = conn.cursor()
 
-c.execute('CREATE TABLE if not exists anime (id, name, image, updated)')
-c.execute('CREATE TABLE if not exists manga (id, name, image, updated)')
+c.execute('''
+	CREATE TABLE if not exists data (
+		type TEXT,
+		id INT,
+		name TEXT,
+		image TEXT,
+		updated TEXT
+	)
+''')
 
 # Build Database
 
@@ -59,7 +63,12 @@ def build(listType):
 		checkTime = datetime.utcnow()
 		
 		#Check DB for duplicates
-		c.execute('SELECT id, name from %s WHERE id=%s' % (listType, id))
+		c.execute(f'''
+			SELECT id, name
+			FROM data
+			WHERE type="{listType}"
+			AND id={id}
+		''')
 		entry = c.fetchone()
 		
 		#If entry non exist
@@ -86,22 +95,26 @@ def build(listType):
 						name = encodeString(name)
 				except Exception as e:
 					name = '_null_'
-					print("(%s) Error encountered on name: %s" % (id, e))
+					print(f'({id}) Error encountered on name: {e}')
 				try:
 					image = parsed.find('img', itemprop='image').get('src');
 					if image is None:
 						image = '_null_'
 				except Exception as e:
 					image = '_null_'
-					print("(%s) Error encountered on image: %s" % (id, e))
+					print(f'({id}) Error encountered on image: {e}')
 					
 				
 				
 			#Add to DB
-			c.execute('''INSERT INTO %s VALUES(%s, "%s", "%s", "%s"''' % (listType, id, name, image, checkTime))
-			conn.commit()
+			c.execute(f'''
+				INSERT INTO data
+				(type, id, name, image, updated)
+				VALUES("{listType}", {id}, "{name}", "{image}", "{checkTime}")
+			''')
+			#conn.commit()
 			
-			print('%s New entry added (%s) [404 streak of %s]' % (strftime('%H:%M:%S'), id, errorCount))
+			print(f'{strftime("%H:%M:%S")} New entry added ({id}) [404 streak of {errorCount}]')
 			
 			#Delay checks to prevent spam
 			if id != 0 and id != totalIds:
@@ -114,27 +127,19 @@ def build(listType):
 			else:
 				errorCount = 0
 			
-			print('%s Entry found (%s) [404 streak of %s]' % (strftime('%H:%M:%S'), id, errorCount))
-			
+			print(f'{strftime("%H:%M:%S")} Entry found ({id}) [404 streak of {errorCount}]')
 # Maintain Database
 
-def maintainOld(listType, thorough):
-	if thorough:
-		c.execute('''
-			SELECT id, name, image, updated
-			FROM %s
-			WHERE image!="_null_"
-			AND name!="_null_"
-			ORDER BY updated ASC
-		''' % (listType))
-	else:
-		c.execute('''
-			SELECT id, name, image, updated
-			FROM %s
-			WHERE image="_null_"
-			OR name="_null_"
-			ORDER BY updated ASC
-		''' % (listType))
+def maintainOld(listType):
+	c.execute(f'''
+		SELECT id, name, image, updated
+		FROM data
+		WHERE type="{listType}"
+		AND image!="_null_"
+		AND name!="_null_"
+		ORDER BY updated ASC
+	''')
+	
 	entries = c.fetchall()
 	
 	try:
@@ -144,17 +149,22 @@ def maintainOld(listType, thorough):
 			currentImage = entry[2]
 			lastUpdated = entry[3]
 			checkTime = datetime.utcnow()
-			logPrefix = '%s %s%s' % (strftime('%H:%M:%S'), listType[:1], str(id).zfill(6))
+			logPrefix = f'{strftime("%H:%M:%S")} {listType[:1]}{str(id).zfill(6)}'
 			
 			#Skip blanks
 			if currentName == '_404_' and currentImage == '_404_':
 				continue
 			
 			#Check Date
-			c.execute('''SELECT id FROM %s ORDER BY id DESC''' % (listType))
+			c.execute(f'''
+				SELECT id
+				FROM data
+				WHERE type="{listType}"
+				ORDER BY id DESC
+			''')
 			totalIDs = c.fetchone()[0]
 			
-			if lastUpdated is not None and thorough == False:
+			if lastUpdated is not None:
 				#Set minimum & maximum times before a check occurs
 				minDays = 20
 				maxDays = 90
@@ -174,42 +184,53 @@ def maintainOld(listType, thorough):
 			parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 			
 			#Check Exist
+			miscErrorCheck = parsed.find(id='myanimelist')
+			
+			if miscErrorCheck is None:
+				print(f'{logPrefix} error encountered: Page did not load.')
+				sleep(6)
+				continue
+			
 			existCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
 			
 			if existCheck is not None:
 				if currentName == '_null_' and currentImage == '_null_':
-					c.execute('''
-						UPDATE %s
-						SET name="_404_", image="_404_", updated="%s"
-						WHERE id=%s
-					''' % (listType, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET name="_404_", image="_404_", updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
-					print('%s both set as 404' % (logPrefix))
+					print(f'{logPrefix} both set as 404')
 				elif currentName == '_null_' and currentImage == '_404_':
-					c.execute('''
-						UPDATE %s
-						SET name="_404_", updated="%s"
-						WHERE id=%s
-					''' % (listType, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET name="_404_", updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
-					print('%s name set as 404' % (logPrefix))
+					print(f'{logPrefix} name set as 404')
 				elif currentName == '_404_' and currentImage == '_null_':
-					c.execute('''
-						UPDATE %s
-						SET image="_404_", updated="%s"
-						WHERE id=%s
-					''' % (listType, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET image="_404_", updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
-					print('%s image set as 404' % (logPrefix))
+					print(f'{logPrefix} image set as 404')
 				else:
-					c.execute('''
-						UPDATE %s
-						SET updated="%s"
-						WHERE id=%s
-					''' % (listType, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
-					print('%s nothing new' % (logPrefix))
-				conn.commit()
+					print(f'{logPrefix} nothing new')
+				#conn.commit()
 				sleep(6)
 				continue
 			
@@ -227,49 +248,53 @@ def maintainOld(listType, thorough):
 			
 			#Update DB if not New
 			if newName == '_null_' and newImage == '_null_':
-				c.execute('''
-					UPDATE %s
-					SET updated="%s"
-					WHERE id=%s
-				''' % (listType, checkTime, id))
+				c.execute(f'''
+					UPDATE data
+					SET updated="{checkTime}"
+					WHERE type="{listType}"
+					AND id={id}
+				''')
 				
-				print('%s null entry' % (logPrefix))
+				print(f'{logPrefix} null entry')
 				
 			elif newName == currentName and newImage == currentImage:
-				c.execute('''
-					UPDATE %s
-					SET updated="%s"
-					WHERE id=%s
-				''' % (listType, checkTime, id))
+				c.execute(f'''
+					UPDATE data
+					SET updated="{checkTime}"
+					WHERE type="{listType}"
+					AND id={id}
+				''')
 				
-				print('%s nothing new' % (logPrefix))
+				print(f'{logPrefix} nothing new')
 				
 			#Update DB if New
 			else:
 				updated = []
 				
 				if newName != '_null_' and newName != currentName:
-					c.execute('''
-						UPDATE %s
-						SET name="%s", updated="%s"
-						WHERE id=%s
-					''' % (listType, newName, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET name="{newName}", updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
 					updated += ['name']
 				
 				if newImage != '_null_' and newImage != currentImage:
-					c.execute('''
-						UPDATE %s
-						SET image="%s", updated="%s"
-						WHERE id=%s
-					''' % (listType, newImage, checkTime, id))
+					c.execute(f'''
+						UPDATE data
+						SET image="{newImage}", updated="{checkTime}"
+						WHERE type="{listType}"
+						AND id={id}
+					''')
 					
 					updated += ['image']
 					
 				updatedStr = ' & '.join([i for i in updated])
-				print('%s %s updated' % (logPrefix, updatedStr))
+				print(f'{logPrefix} {updatedStr} updated')
 			
-			conn.commit()
+			#conn.commit()
 			sleep(6)
 		
 		print('MAINTENENACE COMPLETE')
@@ -282,11 +307,12 @@ def maintainNew(listType):
 	errorCount = 0
 	newCount = 0
 	
-	c.execute('''
+	c.execute(f'''
 		SELECT id, name
-		FROM %s
+		FROM data
+		WHERE type="{listType}"
 		ORDER BY id DESC
-	''' % (listType))
+	''')
 	entries = c.fetchall()
 	
 	# work down from newest 404 until find valid entry
@@ -300,18 +326,25 @@ def maintainNew(listType):
 	while errorCount < 50:
 		id += 1
 		checkTime = datetime.utcnow()
-		logPrefix = '%s %s%s' % (strftime('%H:%M:%S'), listType[:1], id)
+		logPrefix = f'{strftime("%H:%M:%S")} {listType[:1]}{str(id).zfill(6)}'
 		
 		#Begin Parsing
 		url = 'https://myanimelist.net/' + listType + '/' + str(id)
 		parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 		
 		#404 Check
+		miscErrorCheck = parsed.find(id='myanimelist')
+			
+		if miscErrorCheck is None:
+			print(f'{logPrefix} error encountered: Page did not load.')
+			sleep(6)
+			continue
+		
 		errorCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
 		
 		if errorCheck is not None:
 			errorCount += 1
-			print('%s skipped 404 [%s error streak]' % (logPrefix, errorCount))
+			print(f'{logPrefix} skipped 404 [{errorCount} error streak]')
 			sleep(6)
 			continue
 		else:
@@ -329,46 +362,58 @@ def maintainNew(listType):
 		try:
 			image = parsed.find('img', itemprop='image').get('data-src')
 		except Exception as e:
-			image = None
+			image = '_null_'
 			#print("%s image error: %s" % (logPrefix, e))
 		
 		if name == '_null_' and image == '_null_':
 			errorCount += 1
-			print('%s skipped null entry [%s error streak]' % (logPrefix, errorCount))
+			print(f'{logPrefix} skipped null entry [{errorCount} error streak]')
 			sleep(6)
 			continue
 		
 		#Check DB for exist
-		c.execute('''SELECT id from %s WHERE id=%s''' % (listType, id))
+		c.execute(f'''
+			SELECT id
+			FROM data
+			WHERE type="{listType}"
+			AND id={id}
+		''')
 		entry = c.fetchone()
 		
 		#Insert into DB - If entry not exist
 		if entry is None:
-			c.execute('''INSERT INTO %s VALUES(%s, "%s", "%s", "%s")''' % (listType, id, name, image, checkTime))
+			c.execute(f'''
+				INSERT INTO data
+				(type, id, name, image, updated)
+				VALUES("{listType}", {id}, "{name}", "{image}", "{checkTime}")
+		''')
 		
 		#Insert into DB - If entry exist
 		else:
-			c.execute('''UPDATE %s SET name="%s", image="%s", updated="%s" WHERE id=%s''' % (listType, name, image, checkTime, id))
+			c.execute(f'''
+				UPDATE data
+				SET name="{name}", image="{image}", updated="{checkTime}"
+				WHERE type="{listType}"
+				AND id={id}
+			''')
 		
-		conn.commit()
-		print('%s added new [reset error streak]' % (logPrefix))
+		#conn.commit()
+		print(f'{logPrefix} added new [reset error streak]')
 		sleep(6)
 	
-	print('''Ending search...
-%s NEW %s ENTRIES ADDED''' % (newCount, listType.upper()))
+	print(f'''Ending search...
+{newCount} NEW {listType.upper()} ENTRIES ADDED''')
 
 # Commands
 
 #build('anime')
 #build('manga')
-#maintainOld('anime', False)
-#maintainOld('manga', False)
 #maintainNew('anime')
 #maintainNew('manga')
-maintainOld('anime', True)
-maintainOld('manga', True)
+maintainOld('anime')
+maintainOld('manga')
 
 # Save changes and close connection
 
-conn.commit()
+#conn.commit()
 conn.close()
