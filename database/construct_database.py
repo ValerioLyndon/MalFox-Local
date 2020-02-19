@@ -15,20 +15,101 @@ from time import sleep
 from time import strftime
 from datetime import datetime, timezone
 import re
+import urllib.parse
 
 #Scraper
 import requests
 import urllib.request
 from bs4 import BeautifulSoup
 
+# Functions
+
+#Encoder/Decoder for safe storage of random strings into database.
+
+def encodeString(s):
+	return urllib.parse.quote(s)
+
+def decodeString(s):
+	return urllib.parse.unquote(s)
+
 # Begin connection
 
 conn = sqlite3.connect('covers.db')
 c = conn.cursor()
 
-# Maintain Database
+c.execute('CREATE TABLE if not exists anime (id, name, image, updated)')
+c.execute('CREATE TABLE if not exists manga (id, name, image, updated)')
 
-def updateEntry(listType, id)
+# Build Database
+
+def build(listType):
+	errorCount = 0
+	
+	if listType == 'anime':
+		#15700
+		totalIds = 40000
+	elif listType == 'manga':
+		#46650
+		totalIds = 120000
+	else:
+		print('Invalid list type, please try again using either "anime" or "manga".')
+	
+	for id in range(totalIds):
+		id += 1
+		checkTime = datetime.utcnow()
+		
+		#Check DB for duplicates
+		c.execute('SELECT id, name from %s WHERE id=%s' % (listType, id))
+		entry = c.fetchone()
+		
+		#If entry non exist
+		if entry is None:
+			#Begin Parsing
+			url = 'https://myanimelist.net/' + listType + '/' + str(id)
+			parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+			
+			#404 Check
+			errorCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
+			
+			if errorCheck is not None:
+				name = '_404_'
+				image = '_null_'
+				errorCount += 1
+			else:
+				errorCount = 0
+				
+				try:
+					name = parsed.find('span', itemprop='name').string;
+					name = encodeString(name)
+				except Exception as e:
+					name = '_null_'
+					print("(%s) Error encountered on name: %s" % (id, e))
+				try:
+					image = parsed.find('img', itemprop='image').get('src');
+				except Exception as e:
+					image = '_null_'
+					print("(%s) Error encountered on image: %s" % (id, e))
+				
+			#Add to DB
+			c.execute('''INSERT INTO %s VALUES(%s, "%s", "%s", "%s"''' % (listType, id, name, image, checkTime))
+			conn.commit()
+			
+			print('%s New entry added (%s) [404 streak of %s]' % (strftime('%H:%M:%S'), id, errorCount))
+			
+			#Delay checks to prevent spam
+			if id != 0 and id != totalIds:
+				sleep(6)
+		
+		#If entry exist
+		else:
+			if entry[1] == '_404_':
+				errorCount += 1
+			else:
+				errorCount = 0
+			
+			print('%s Entry found (%s) [404 streak of %s]' % (strftime('%H:%M:%S'), id, errorCount))
+			
+# Maintain Database
 
 def maintainOld(listType, thorough):
 	if thorough:
@@ -128,7 +209,7 @@ def maintainOld(listType, thorough):
 			#Check for New
 			try:
 				newName = parsed.find('span', itemprop='name').string
-				newName = func.encodeString(newName)
+				newName = encodeString(newName)
 			except Exception as e:
 				newName = '_null_'
 			
@@ -186,7 +267,7 @@ def maintainOld(listType, thorough):
 		
 		print('MAINTENENACE COMPLETE')
 	except Exception as e:
-		f = open('log.txt', 'a')
+		f = open('logs/log.txt', 'w+')
 		f.write(e)
 		f.close()
 
@@ -234,7 +315,7 @@ def maintainNew(listType):
 		
 		try:
 			name = parsed.find('span', itemprop='name').string
-			name = func.encodeString(name)
+			name = encodeString(name)
 		except Exception as e:
 			name = '_null_'
 			#print("%s name error: %s" % (logPrefix, e))
@@ -269,10 +350,10 @@ def maintainNew(listType):
 	print('''Ending search...
 %s NEW %s ENTRIES ADDED''' % (newCount, listType.upper()))
 
-
 # Commands
 
-#while True:
+#build('anime')
+#build('manga')
 #maintainOld('anime', False)
 #maintainOld('manga', False)
 #maintainNew('anime')
