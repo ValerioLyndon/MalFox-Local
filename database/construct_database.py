@@ -80,15 +80,22 @@ def build(listType):
 				
 				try:
 					name = parsed.find('span', itemprop='name').string;
-					name = encodeString(name)
+					if name is None:
+						name = '_null_'
+					else:
+						name = encodeString(name)
 				except Exception as e:
 					name = '_null_'
 					print("(%s) Error encountered on name: %s" % (id, e))
 				try:
 					image = parsed.find('img', itemprop='image').get('src');
+					if image is None:
+						image = '_null_'
 				except Exception as e:
 					image = '_null_'
 					print("(%s) Error encountered on image: %s" % (id, e))
+					
+				
 				
 			#Add to DB
 			c.execute('''INSERT INTO %s VALUES(%s, "%s", "%s", "%s"''' % (listType, id, name, image, checkTime))
