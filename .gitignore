@@ -1,6 +1,5 @@
 *.nfp*
 *.wip*
 reference_lists
-*.db
-*.db-journal
+*.db*
 logs
