@@ -18,6 +18,12 @@ from bs4 import BeautifulSoup
 
 # VARIABLES & SETUP
 
+debug = False
+
+# seconds to delay actions, preventing MAL spam protection from activating
+
+delay = 6
+
 timeFormat = '%Y-%m-%d %H:%M:%S.%f'
 runTime = strftime('%Y-%m-%d %H;%M;%S')
 
@@ -38,7 +44,7 @@ c.execute('''
 
 # BASIC FUNCTIONS
 
-#Encoder/Decoder for safe storage of random strings into database.
+# Encoder/Decoder for safe storage of random strings into database.
 
 def encodeString(s):
 	return urllib.parse.quote(s)
@@ -58,9 +64,17 @@ def log(msg):
 
 # PROGRAM FUNCTIONS
 
+if debug: log('DEBUG ENABLED')
+
+# Estimate total database entries
+
 def estimateEntries(type):
 	url = 'https://myanimelist.net/' + type + '.php?o=9&c[0]=a&c[1]=d&cv=2'
 	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+	
+	# Add delay - uses print instead of log since time delays will only matter when viewing live
+	print(f'Sent web request - waiting {delay} seconds to avoid spam protection...')
+	sleep(delay)
 	
 	recent = parsed.find('a', class_='hoverinfo_trigger')
 	recentId = recent['href'].split('/')[4]
@@ -68,10 +82,62 @@ def estimateEntries(type):
 	estimate = int(recentId) + 50
 	return estimate
 
+# Returns information from database entries in dictionary format.
+
+def parseEntry(listType, id):
+	data = {
+		'type': listType,
+		'id': id,
+		'name': '_null_',
+		'image': '_null_',
+		'updated': str(datetime.utcnow())
+	}
+	
+	# Fetch result
+	
+	url = 'https://myanimelist.net/' + listType + '/' + str(id)
+	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+	
+	# Add delay - uses print instead of log since time delays will only matter when viewing live
+	print(f'Sent web request - waiting {delay} seconds to avoid spam protection...')
+	sleep(delay)
+	
+	# Check for misc problems (504 errors, page load faults, etc)
+	
+	malHealth = parsed.find(id='myanimelist')
+	
+	if malHealth is None:
+		data['name'] = '_error_'
+		data['image'] = '_error_'
+		data['error'] = 'unknown'
+		return data
+	
+	# Check for 404
+	
+	badLink = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
+	
+	if badLink is not None:
+		data['name'] = '_404_'
+		data['image'] = '_404_'
+		data['error'] = '404'
+		return data
+		
+	# Fetch new data
+	
+	name = parsed.find('span', itemprop='name')
+	if name is not None:
+		data['name'] = encodeString(name.text)
+	
+	image = parsed.find('img', itemprop='image')
+	if image is not None:
+		data['image'] = image.get('src')
+	
+	return data
+
 # Build Database
 
 def build(listType):
-	errorCount = 0
+	log('BEGIN BUILDING')
 	
 	totalEntries = estimateEntries(listType)
 	
@@ -79,8 +145,10 @@ def build(listType):
 		for id in range(totalEntries):
 			id += 1
 			checkTime = datetime.utcnow()
+			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
-			#Check DB for duplicates
+			# Check DB for duplicates
+			
 			c.execute(f'''
 				SELECT id, name
 				FROM data
@@ -89,75 +157,34 @@ def build(listType):
 			''')
 			entry = c.fetchone()
 			
-			#If entry non exist
+			# If entry not exist
+			
 			if entry is None:
-				#Begin Parsing
-				url = 'https://myanimelist.net/' + listType + '/' + str(id)
-				parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
-				
-				#404 Check
-				errorCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
-				
-				if errorCheck is not None:
-					name = '_404_'
-					image = '_null_'
-					errorCount += 1
-				else:
-					errorCount = 0
-					
-					try:
-						name = parsed.find('span', itemprop='name').string;
-						if name is None:
-							name = '_null_'
-						else:
-							name = encodeString(name)
-					except Exception as e:
-						name = '_null_'
-						#print(f'({id}) Error encountered on name: {e}')
-					try:
-						image = parsed.find('img', itemprop='image').get('src');
-						if image is None:
-							image = '_null_'
-					except Exception as e:
-						image = '_null_'
-						#print(f'({id}) Error encountered on image: {e}')
-						
-					
+				newData = parseEntry(listType, id)
 					
 				#Add to DB
 				c.execute(f'''
 					INSERT INTO data
 					(type, id, name, image, updated)
-					VALUES("{listType}", {id}, "{name}", "{image}", "{checkTime}")
+					VALUES("{newData['type']}", {newData['id']}, "{newData['name']}", "{newData['image']}", "{checkTime}")
 				''')
-				#conn.commit()
+				if not debug: conn.commit()
 				
-				log(f'New entry added ({id}) [404 streak of {errorCount}]')
-				
-				#Delay checks to prevent spam
-				if id != 0 and id != totalEntries:
-					sleep(6)
-			
-			#If entry exist
+				log(f'{logPrefix} Entry added')
 			else:
-				if entry[1] == '_404_':
-					errorCount += 1
-				else:
-					errorCount = 0
-				
-				log(f'Entry found ({id}) [404 streak of {errorCount}]')
+				log(f'{logPrefix} Already in DB')
 	except Exception as e:
-		log('error: ' + e)
+		log('ERROR: ' + str(e))
 
 # Maintain Database
 
 def maintainOld(listType):
+	log('BEGIN MAINTAINING OLD')
+	
 	c.execute(f'''
-		SELECT id, name, image, updated
+		SELECT type, id, name, image, updated
 		FROM data
 		WHERE type="{listType}"
-		AND image!="_null_"
-		AND name!="_null_"
 		ORDER BY updated ASC
 	''')
 	
@@ -165,15 +192,18 @@ def maintainOld(listType):
 	
 	try:
 		for entry in entries:
-			id = entry[0]
-			currentName = entry[1]
-			currentImage = entry[2]
-			lastUpdated = entry[3]
+			currentData = {
+				'type': entry[0],
+				'id': entry[1],
+				'name': entry[2],
+				'image': entry[3],
+				'updated': entry[4]
+			}
 			checkTime = datetime.utcnow()
-			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
+			logPrefix = f'{listType[:1]}{str(currentData["id"]).zfill(6)}'
 			
 			#Skip blanks
-			if currentName == '_404_' and currentImage == '_404_':
+			if currentData['name'] == '_404_':
 				continue
 			
 			#Check Date
@@ -185,129 +215,84 @@ def maintainOld(listType):
 			''')
 			totalEntries = c.fetchone()[0]
 			
-			if lastUpdated is not None:
+			if currentData['updated'] is not None:
 				#Set minimum & maximum times before a check occurs
 				minDays = 20
 				maxDays = 90
 				
 				#Set weighted formula for priority purposes (older gets checked less, newer sooner)
-				checkWeight = minDays * (totalEntries / id)
+				checkWeight = minDays * (totalEntries / currentData['id'])
 				if checkWeight > maxDays:
 					checkWeight = maxDays
 				
-				sinceLast = abs(datetime.strptime(lastUpdated, timeFormat) - checkTime).days
+				sinceLast = abs(datetime.strptime(currentData['updated'], timeFormat) - checkTime).days
 				
 				if sinceLast < checkWeight:
 					continue
 			
-			#Begin Parsing
-			url = 'https://myanimelist.net/' + listType + '/' + str(id)
-			parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+			newData = parseEntry(currentData['type'], currentData['id'])
 			
-			#Check Exist
-			miscErrorCheck = parsed.find(id='myanimelist')
+			# Handle errors
 			
-			if miscErrorCheck is None:
-				log(f'{logPrefix} error encountered: Page did not load.')
-				sleep(6)
-				continue
-			
-			existCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
-			
-			if existCheck is not None:
-				if currentName == '_null_' and currentImage == '_null_':
-					c.execute(f'''
-						UPDATE data
-						SET name="_404_", image="_404_", updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
-					''')
-					
-					log(f'{logPrefix} both set as 404')
-				elif currentName == '_null_' and currentImage == '_404_':
-					c.execute(f'''
-						UPDATE data
-						SET name="_404_", updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
-					''')
-					
-					log(f'{logPrefix} name set as 404')
-				elif currentName == '_404_' and currentImage == '_null_':
-					c.execute(f'''
-						UPDATE data
-						SET image="_404_", updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
-					''')
-					
-					log(f'{logPrefix} image set as 404')
-				else:
+			if 'error' in newData:
+				# 404
+				if newData['error'] == '404':
 					c.execute(f'''
 						UPDATE data
 						SET updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
+						WHERE type="{currentData['type']}"
+						AND id={currentData['id']}
 					''')
 					
-					log(f'{logPrefix} nothing new')
-				#conn.commit()
-				sleep(6)
-				continue
+					log(f'{logPrefix} 404 entry')
+					if not debug: conn.commit()
+					continue
+				
+				# Generic
+				elif newData['error'] is not None:
+					log(f'{logPrefix} error: {newData["error"]}')
 			
-			#Check for New
-			try:
-				newName = parsed.find('span', itemprop='name').string
-				newName = encodeString(newName)
-			except Exception as e:
-				newName = '_null_'
+			# Update DB with new Data
 			
-			try:
-				newImage = parsed.find('img', itemprop='image').get('src')
-			except Exception as e:
-				newImage = '_null_'
-			
-			#Update DB if not New
-			if newName == '_null_' and newImage == '_null_':
+			if newData['name'] == '_null_' and newData['image'] == '_null_':
 				c.execute(f'''
 					UPDATE data
 					SET updated="{checkTime}"
-					WHERE type="{listType}"
-					AND id={id}
+					WHERE type="{currentData['type']}"
+					AND id={currentData['id']}
 				''')
 				
 				log(f'{logPrefix} null entry')
 				
-			elif newName == currentName and newImage == currentImage:
+			elif newData['name'] == currentData['name'] and newData['image'] == currentData['image']:
 				c.execute(f'''
 					UPDATE data
 					SET updated="{checkTime}"
-					WHERE type="{listType}"
-					AND id={id}
+					WHERE type="{currentData['type']}"
+					AND id={currentData['id']}
 				''')
 				
 				log(f'{logPrefix} nothing new')
-				
-			#Update DB if New
+			
 			else:
 				updated = []
 				
-				if newName != '_null_' and newName != currentName:
+				if newData['name'] != '_null_' and newData['name'] != currentData['name']:
 					c.execute(f'''
 						UPDATE data
-						SET name="{newName}", updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
+						SET name="{newData['name']}", updated="{checkTime}"
+						WHERE type="{currentData['type']}"
+						AND id={currentData['id']}
 					''')
 					
 					updated += ['name']
 				
-				if newImage != '_null_' and newImage != currentImage:
+				if newData['image'] != '_null_' and newData['image'] != currentData['image']:
 					c.execute(f'''
 						UPDATE data
-						SET image="{newImage}", updated="{checkTime}"
-						WHERE type="{listType}"
-						AND id={id}
+						SET image="{newData['image']}", updated="{checkTime}"
+						WHERE type="{currentData['type']}"
+						AND id={currentData['id']}
 					''')
 					
 					updated += ['image']
@@ -318,14 +303,15 @@ def maintainOld(listType):
 				else:
 					log(f'{logPrefix} nothing updated')
 			
-			#conn.commit()
-			sleep(6)
+			if not debug: conn.commit()
 		
 		log('MAINTENANCE COMPLETE')
 	except Exception as e:
-		log('error: ' + e)
+		log('ERROR: ' + str(e))
 
 def maintainNew(listType):
+	log('BEGIN MAINTAINING NEW')
+	
 	errorCount = 0
 	newCount = 0
 	
@@ -346,66 +332,43 @@ def maintainNew(listType):
 			break
 	
 	try:
-		while id < totalEntries and errorCount < 50:
+		while errorCount < 50:
 			id += 1
 			checkTime = datetime.utcnow()
-			logPrefix = f'{strftime("%H:%M:%S")} {listType[:1]}{str(id).zfill(6)}'
+			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
-			#Begin Parsing
-			url = 'https://myanimelist.net/' + listType + '/' + str(id)
-			parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+			newData = parseEntry(listType, str(id))
 			
-			#404 Check
-			miscErrorCheck = parsed.find(id='myanimelist')
-				
-			if miscErrorCheck is None:
-				log(f'{logPrefix} error encountered: Page did not load.')
-				sleep(6)
-				continue
+			# Handle errors
 			
-			errorCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
-			
-			if errorCheck is not None:
-				if id > totalEntries:
+			if 'error' in newData:
+				# 404
+				if newData['error'] == '404':
 					errorCount += 1
-				log(f'{logPrefix} skipped 404')
-				sleep(6)
-				continue
+					logSuffix = f'- 404 [{errorCount} streak]'
+				
+				# Generic
+				elif newData['error'] is not None:
+					logSuffix = '- generic error [streak maintained]'
+			
 			else:
 				errorCount = 0
+				logSuffix = '[reset error streak]'
 				
-			#404 Check Passed, continuing
+			# Error Check Passed, continuing
+			
 			newCount += 1
 			
-			try:
-				name = parsed.find('span', itemprop='name').string;
-				if name is None:
-					name = '_null_'
-				else:
-					name = encodeString(name)
-			except Exception as e:
-				name = '_null_'
-				#print(f'({id}) Error encountered on name: {e}')
-			try:
-				image = parsed.find('img', itemprop='image').get('src');
-				if image is None:
-					image = '_null_'
-			except Exception as e:
-				image = '_null_'
-				#print(f'({id}) Error encountered on image: {e}')
-			
-			if name == '_null_' and image == '_null_':
-				errorCount += 1
+			if newData['name'] == '_null_' and newData['image'] == '_null_':
+				errorCount = 0
 				log(f'{logPrefix} skipped null entry [{errorCount} error streak]')
-				sleep(6)
-				continue
 			
 			#Check DB for exist
 			c.execute(f'''
 				SELECT id
 				FROM data
-				WHERE type="{listType}"
-				AND id={id}
+				WHERE type="{newData['type']}"
+				AND id={newData['id']}
 			''')
 			entry = c.fetchone()
 			
@@ -414,37 +377,36 @@ def maintainNew(listType):
 				c.execute(f'''
 					INSERT INTO data
 					(type, id, name, image, updated)
-					VALUES("{listType}", {id}, "{name}", "{image}", "{checkTime}")
-			''')
+					VALUES("{newData['type']}", {newData['id']}, "{newData['name']}", "{newData['image']}", "{checkTime}")
+				''')
 			
 			#Insert into DB - If entry exist
 			else:
 				c.execute(f'''
 					UPDATE data
-					SET name="{name}", image="{image}", updated="{checkTime}"
-					WHERE type="{listType}"
-					AND id={id}
+					SET name="{newData['name']}", image="{newData['image']}", updated="{checkTime}"
+					WHERE type="{newData['type']}"
+					AND id={newData['id']}
 				''')
 			
-			#conn.commit()
-			log(f'{logPrefix} added new [reset error streak]')
-			sleep(6)
+			if not debug: conn.commit()
+			log(f'{logPrefix} added new {logSuffix}')
 		
 		log(f'''Ending search...
 {newCount} NEW {listType.upper()} ENTRIES ADDED''')
 	except Exception as e:
-		log('error: ' + e)
+		log('ERROR: ' + str(e))
 
 # Commands
 
-#build('anime')
-#build('manga')
-#maintainNew('anime')
-#maintainNew('manga')
-maintainOld('anime')
-maintainOld('manga')
+listTypes = ('anime', 'manga')
+
+for listType in listTypes:
+	build(listType)
+	maintainOld(listType)
+	maintainNew(listType)
 
 # Save changes and close connection
 
-#conn.commit()
+if not debug: conn.commit()
 conn.close()
