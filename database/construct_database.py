@@ -1,4 +1,4 @@
-#IMPORTS
+# IMPORTS
 
 #Database
 import sqlite3
@@ -16,7 +16,7 @@ import requests
 import urllib.request
 from bs4 import BeautifulSoup
 
-#VARIABLES
+# VARIABLES & SETUP
 
 timeFormat = '%Y-%m-%d %H:%M:%S.%f'
 runTime = strftime('%Y-%m-%d %H;%M;%S')
@@ -24,7 +24,19 @@ runTime = strftime('%Y-%m-%d %H;%M;%S')
 conn = sqlite3.connect('covers.db')
 c = conn.cursor()
 
-# Functions
+# Create Database if Needed
+
+c.execute('''
+	CREATE TABLE if not exists data (
+		type TEXT,
+		id INT,
+		name TEXT,
+		image TEXT,
+		updated TEXT
+	)
+''')
+
+# BASIC FUNCTIONS
 
 #Encoder/Decoder for safe storage of random strings into database.
 
@@ -44,32 +56,27 @@ def log(msg):
 	
 	print(output)
 
-# Create Database if Needed
+# PROGRAM FUNCTIONS
 
-c.execute('''
-	CREATE TABLE if not exists data (
-		type TEXT,
-		id INT,
-		name TEXT,
-		image TEXT,
-		updated TEXT
-	)
-''')
+def estimateEntries(type):
+	url = 'https://myanimelist.net/' + type + '.php?o=9&c[0]=a&c[1]=d&cv=2'
+	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
+	
+	recent = parsed.find('a', class_='hoverinfo_trigger')
+	recentId = recent['href'].split('/')[4]
+	
+	estimate = int(recentId) + 50
+	return estimate
 
 # Build Database
 
 def build(listType):
 	errorCount = 0
 	
-	if listType == 'anime':
-		#15700
-		totalIds = 40000
-	elif listType == 'manga':
-		#46650
-		totalIds = 120000
+	totalEntries = estimateEntries(listType)
 	
 	try:
-		for id in range(totalIds):
+		for id in range(totalEntries):
 			id += 1
 			checkTime = datetime.utcnow()
 			
@@ -128,7 +135,7 @@ def build(listType):
 				log(f'New entry added ({id}) [404 streak of {errorCount}]')
 				
 				#Delay checks to prevent spam
-				if id != 0 and id != totalIds:
+				if id != 0 and id != totalEntries:
 					sleep(6)
 			
 			#If entry exist
@@ -141,6 +148,7 @@ def build(listType):
 				log(f'Entry found ({id}) [404 streak of {errorCount}]')
 	except Exception as e:
 		log('error: ' + e)
+
 # Maintain Database
 
 def maintainOld(listType):
@@ -175,7 +183,7 @@ def maintainOld(listType):
 				WHERE type="{listType}"
 				ORDER BY id DESC
 			''')
-			totalIDs = c.fetchone()[0]
+			totalEntries = c.fetchone()[0]
 			
 			if lastUpdated is not None:
 				#Set minimum & maximum times before a check occurs
@@ -183,7 +191,7 @@ def maintainOld(listType):
 				maxDays = 90
 				
 				#Set weighted formula for priority purposes (older gets checked less, newer sooner)
-				checkWeight = minDays * (totalIDs / id)
+				checkWeight = minDays * (totalEntries / id)
 				if checkWeight > maxDays:
 					checkWeight = maxDays
 				
@@ -338,7 +346,7 @@ def maintainNew(listType):
 			break
 	
 	try:
-		while errorCount < 50:
+		while id < totalEntries and errorCount < 50:
 			id += 1
 			checkTime = datetime.utcnow()
 			logPrefix = f'{strftime("%H:%M:%S")} {listType[:1]}{str(id).zfill(6)}'
@@ -358,8 +366,9 @@ def maintainNew(listType):
 			errorCheck = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
 			
 			if errorCheck is not None:
-				errorCount += 1
-				log(f'{logPrefix} skipped 404 [{errorCount} error streak]')
+				if id > totalEntries:
+					errorCount += 1
+				log(f'{logPrefix} skipped 404')
 				sleep(6)
 				continue
 			else:
