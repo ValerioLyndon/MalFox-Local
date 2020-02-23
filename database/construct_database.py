@@ -114,9 +114,9 @@ def parseEntry(listType, id):
 	
 	# Check for 404
 	
-	badLink = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
+	deadEntry = parsed.find('img', src=re.compile('^https\://cdn\.myanimelist\.net/images/error/404_image\.png'))
 	
-	if badLink is not None:
+	if deadEntry is not None:
 		data['name'] = '_404_'
 		data['image'] = '_404_'
 		data['error'] = '404'
@@ -138,6 +138,103 @@ def parseEntry(listType, id):
 	if debug: log(data)
 	return data
 
+# Commits changes for a single entry to database.
+
+def updateById(listType, id):
+	logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
+	
+	newData = parseEntry(listType, id)
+	
+	# Check for existence in DB
+	
+	c.execute(f'''
+		SELECT type, id, name, image, updated
+		FROM data
+		WHERE type="{listType}"
+		AND id={id}
+	''')
+	entry = c.fetchone()
+	
+	if entry is None:
+		# If entry does NOT exist
+		
+		sqlCommand = '''
+			INSERT INTO data
+			(type, id, name, image, updated)
+			VALUES("{type}", {id}, "{name}", "{image}", "{updated}")
+		'''
+		
+		logSuffix = 'Entry Added'	
+	
+	else:
+		# If entry DOES exist
+		
+		sqlCommand = '''
+			UPDATE data
+			SET name="{name}",
+				image="{image}",
+				updated="{updated}"
+			WHERE type="{type}"
+			AND id={id}
+		'''
+		
+		oldData = {
+			'type': entry[0],
+			'id': entry[1],
+			'name': entry[2],
+			'image': entry[3],
+			'updated': entry[4]
+		}
+		
+		# Handle data
+		
+		if 'error' in newData:
+			# Retain old data if error - this may change in future but for now it prioritizes maintaining data in case it's a 404 caused by other issues
+			newData['name'] = oldData['name']
+			newData['image'] = oldData['image']
+			
+			if newData['error'] == '404':
+				logSuffix = '404 entry'
+				
+			elif newData['error'] is not None:
+				# Generic error handling
+				logSuffix = f'error: {newData["error"]}'
+		
+		else:
+			updated = []
+			
+			if newData['name'] == '_null_':
+				newData['name'] = oldData['name']
+			
+			elif newData['name'] != oldData['name']:
+				updated += ['name']
+			
+			if newData['image'] == '_null_':
+				newData['image'] = oldData['image']
+			
+			elif newData['image'] != oldData['image']:
+				updated += ['image']
+			
+			# Log changes
+			if len(updated) > 0:
+				logSuffix = f'{" & ".join(updated)} updated'
+			elif newData['name'] == '_null_' and newData['image'] == '_null_':
+				logSuffix = 'nothing updated (null entry)'
+			else:
+				logSuffix = 'nothing updated'
+	
+	# Commit Changes
+	
+	sqlCommand = sqlCommand.format(type=newData['type'], id=newData['id'], name=newData['name'], image=newData['image'], updated=newData['updated'])
+	
+	if debug: print(sqlCommand)
+	c.execute(sqlCommand)
+	if not debug: conn.commit()
+	
+	log(f'{logPrefix} {logSuffix}')
+	
+	return newData
+
 # Build Database
 
 def build(listType):
@@ -151,7 +248,7 @@ def build(listType):
 			checkTime = datetime.utcnow()
 			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
-			# Check DB for duplicates
+			# Check DB for duplicates - does this outside of updateById function to avoid parsing every entry unnecessarily
 			
 			c.execute(f'''
 				SELECT id, name
@@ -164,19 +261,9 @@ def build(listType):
 			# If entry not exist
 			
 			if entry is None:
-				newData = parseEntry(listType, id)
-					
-				#Add to DB
-				c.execute(f'''
-					INSERT INTO data
-					(type, id, name, image, updated)
-					VALUES("{newData['type']}", {newData['id']}, "{newData['name']}", "{newData['image']}", "{checkTime}")
-				''')
-				if not debug: conn.commit()
-				
-				log(f'{logPrefix} Entry added')
+				updateById(listType, id)
 			else:
-				log(f'{logPrefix} Already in DB')
+				log(f'{logPrefix} Skipped (already in DB)')
 	except Exception as e:
 		log('ERROR: ' + str(e))
 
@@ -203,14 +290,16 @@ def maintainOld(listType):
 				'image': entry[3],
 				'updated': entry[4]
 			}
-			checkTime = datetime.utcnow()
-			logPrefix = f'{listType[:1]}{str(currentData["id"]).zfill(6)}'
 			
-			#Skip blanks
+			checkTime = datetime.utcnow()
+			
+			# Skip blanks
+			
 			if currentData['name'] == '_404_':
 				continue
 			
-			#Check Date
+			# Check Date
+			
 			c.execute(f'''
 				SELECT id
 				FROM data
@@ -234,80 +323,9 @@ def maintainOld(listType):
 				if sinceLast < checkWeight:
 					continue
 			
-			newData = parseEntry(currentData['type'], currentData['id'])
+			# Update entry
 			
-			# Handle errors
-			
-			if 'error' in newData:
-				# 404
-				if newData['error'] == '404':
-					c.execute(f'''
-						UPDATE data
-						SET updated="{checkTime}"
-						WHERE type="{currentData['type']}"
-						AND id={currentData['id']}
-					''')
-					
-					log(f'{logPrefix} 404 entry')
-					if not debug: conn.commit()
-					continue
-				
-				# Generic
-				elif newData['error'] is not None:
-					log(f'{logPrefix} error: {newData["error"]}')
-			
-			# Update DB with new Data
-			
-			if newData['name'] == '_null_' and newData['image'] == '_null_':
-				c.execute(f'''
-					UPDATE data
-					SET updated="{checkTime}"
-					WHERE type="{currentData['type']}"
-					AND id={currentData['id']}
-				''')
-				
-				log(f'{logPrefix} null entry')
-				
-			elif newData['name'] == currentData['name'] and newData['image'] == currentData['image']:
-				c.execute(f'''
-					UPDATE data
-					SET updated="{checkTime}"
-					WHERE type="{currentData['type']}"
-					AND id={currentData['id']}
-				''')
-				
-				log(f'{logPrefix} nothing new')
-			
-			else:
-				updated = []
-				
-				if newData['name'] != '_null_' and newData['name'] != currentData['name']:
-					c.execute(f'''
-						UPDATE data
-						SET name="{newData['name']}", updated="{checkTime}"
-						WHERE type="{currentData['type']}"
-						AND id={currentData['id']}
-					''')
-					
-					updated += ['name']
-				
-				if newData['image'] != '_null_' and newData['image'] != currentData['image']:
-					c.execute(f'''
-						UPDATE data
-						SET image="{newData['image']}", updated="{checkTime}"
-						WHERE type="{currentData['type']}"
-						AND id={currentData['id']}
-					''')
-					
-					updated += ['image']
-					
-				if len(updated) > 0:
-					updatedStr = ' & '.join(updated)
-					log(f'{logPrefix} {updatedStr} updated')
-				else:
-					log(f'{logPrefix} nothing updated')
-			
-			if not debug: conn.commit()
+			updateById(currentData['type'], currentData['id'])
 		
 		log('MAINTENANCE COMPLETE')
 	except Exception as e:
@@ -317,7 +335,6 @@ def maintainNew(listType):
 	log('BEGIN MAINTAINING NEW')
 	
 	errorCount = 0
-	newCount = 0
 	
 	c.execute(f'''
 		SELECT id, name
@@ -325,6 +342,7 @@ def maintainNew(listType):
 		WHERE type="{listType}"
 		ORDER BY id DESC
 	''')
+	
 	entries = c.fetchall()
 	
 	# work down from newest 404 until find valid entry
@@ -336,68 +354,25 @@ def maintainNew(listType):
 			break
 	
 	try:
-		while errorCount < 50:
+		while True:
+			if errorCount >= 50:
+				log('Max 404 streak reached, stopping search.')
+				break
+			
 			id += 1
-			checkTime = datetime.utcnow()
-			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
-			newData = parseEntry(listType, str(id))
+			# Update entry and set variable containing data
 			
-			# Handle errors
+			data = updateById(listType, id)
 			
-			if 'error' in newData:
-				# 404
-				if newData['error'] == '404':
-					errorCount += 1
-					logSuffix = f'- 404 [{errorCount} streak]'
-				
-				# Generic
-				elif newData['error'] is not None:
-					logSuffix = '- generic error [streak maintained]'
+			# Count errors
+			if data.get('error') == '404':
+				errorCount += 1
 			
 			else:
 				errorCount = 0
-				logSuffix = '[reset error streak]'
-				
-			# Error Check Passed, continuing
-			
-			newCount += 1
-			
-			if newData['name'] == '_null_' and newData['image'] == '_null_':
-				errorCount = 0
-				log(f'{logPrefix} skipped null entry [{errorCount} error streak]')
-			
-			#Check DB for exist
-			c.execute(f'''
-				SELECT id
-				FROM data
-				WHERE type="{newData['type']}"
-				AND id={newData['id']}
-			''')
-			entry = c.fetchone()
-			
-			#Insert into DB - If entry not exist
-			if entry is None:
-				c.execute(f'''
-					INSERT INTO data
-					(type, id, name, image, updated)
-					VALUES("{newData['type']}", {newData['id']}, "{newData['name']}", "{newData['image']}", "{checkTime}")
-				''')
-			
-			#Insert into DB - If entry exist
-			else:
-				c.execute(f'''
-					UPDATE data
-					SET name="{newData['name']}", image="{newData['image']}", updated="{checkTime}"
-					WHERE type="{newData['type']}"
-					AND id={newData['id']}
-				''')
-			
-			if not debug: conn.commit()
-			log(f'{logPrefix} added new {logSuffix}')
 		
-		log(f'''Ending search...
-{newCount} NEW {listType.upper()} ENTRIES ADDED''')
+		log('MAINTENANCE COMPLETE')
 	except Exception as e:
 		log('ERROR: ' + str(e))
 
@@ -411,7 +386,6 @@ if __name__ == '__main__':
 		maintainNew(listType)
 		maintainOld(listType)
 
-# Save changes and close connection
+# Close connection
 
-if not debug: conn.commit()
 conn.close()
