@@ -99,7 +99,7 @@ def parseEntry(listType, id):
 	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 	
 	# Add delay - uses print instead of log since time delays will only matter when viewing live
-	print(f'Sent web request - waiting {delay} seconds to avoid spam protection...')
+	#print(f'Sent web request - waiting {delay} seconds to avoid spam protection...')
 	sleep(delay)
 	
 	# Check for misc problems (504 errors, page load faults, etc)
@@ -130,8 +130,12 @@ def parseEntry(listType, id):
 	
 	image = parsed.find('img', itemprop='image')
 	if image is not None:
-		data['image'] = image.get('src')
+		if image.get('data-src') is not None:
+			data['image'] = image.get('data-src')
+		elif image.get('src') is not None:
+			data['image'] = image.get('src')
 	
+	if debug: log(data)
 	return data
 
 # Build Database
@@ -399,12 +403,13 @@ def maintainNew(listType):
 
 # Commands
 
-listTypes = ('anime', 'manga')
-
-for listType in listTypes:
-	build(listType)
-	maintainOld(listType)
-	maintainNew(listType)
+if __name__ == '__main__':
+	listTypes = ('anime', 'manga')
+	
+	for listType in listTypes:
+		#build(listType)
+		maintainNew(listType)
+		maintainOld(listType)
 
 # Save changes and close connection
 
