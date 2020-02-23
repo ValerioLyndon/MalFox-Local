@@ -21,8 +21,10 @@ from bs4 import BeautifulSoup
 debug = False
 
 # seconds to delay actions, preventing MAL spam protection from activating
-
 delay = 6
+
+# amount of 404 entries over the estimated total entries to scan before giving up
+scanBuffer = 50
 
 timeFormat = '%Y-%m-%d %H:%M:%S.%f'
 runTime = strftime('%Y-%m-%d %H;%M;%S')
@@ -68,8 +70,8 @@ if debug: log('DEBUG ENABLED')
 
 # Estimate total database entries
 
-def estimateEntries(type):
-	url = 'https://myanimelist.net/' + type + '.php?o=9&c[0]=a&c[1]=d&cv=2'
+def estimateEntries(listType):
+	url = 'https://myanimelist.net/' + listType + '.php?o=9&c[0]=a&c[1]=d&cv=2'
 	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 	
 	# Add delay - uses print instead of log since time delays will only matter when viewing live
@@ -79,7 +81,7 @@ def estimateEntries(type):
 	recent = parsed.find('a', class_='hoverinfo_trigger')
 	recentId = recent['href'].split('/')[4]
 	
-	estimate = int(recentId) + 50
+	estimate = int(recentId)
 	return estimate
 
 # Returns information from database entries in dictionary format.
@@ -164,7 +166,13 @@ def updateById(listType, id):
 			VALUES("{type}", {id}, "{name}", "{image}", "{updated}")
 		'''
 		
-		logSuffix = 'Entry Added'	
+		# Log Changes
+		if newData.get('error') == '404':
+			logSuffix = 'Added new (404)'
+		elif newData.get('error') != None:
+			logSuffix = 'Added new (unknown error)'
+		else:
+			logSuffix = 'Added new'
 	
 	else:
 		# If entry DOES exist
@@ -194,7 +202,7 @@ def updateById(listType, id):
 			newData['image'] = oldData['image']
 			
 			if newData['error'] == '404':
-				logSuffix = '404 entry'
+				logSuffix = 'nothing updated (404)'
 				
 			elif newData['error'] is not None:
 				# Generic error handling
@@ -240,7 +248,29 @@ def updateById(listType, id):
 def build(listType):
 	log('BEGIN BUILDING')
 	
-	totalEntries = estimateEntries(listType)
+	# Set local entry count. Scans down from top until it finds a valid entry. This is to account for any scan buffer entries.
+	
+	c.execute(f'''
+		SELECT id, name
+		FROM data
+		WHERE type="{listType}"
+		ORDER BY id DESC
+	''')
+	
+	entries = c.fetchall()
+	
+	for entry in entries:
+		if entry[1] == '_404_':
+			continue
+		else:
+			localEntryCount = entry[0]
+			break
+	
+	# Set total entry count.
+	
+	totalEntryCount = estimateEntries(listType)
+	
+	# Set existing IDs in DB
 	
 	c.execute(f'''
 		SELECT id
@@ -250,10 +280,22 @@ def build(listType):
 	entries = c.fetchall()
 	ids = [id for tuple in entries for id in tuple]
 	
+	# Begin building
+	
 	try:
-		for id in range(totalEntries):
+		errorStreak = 0
+		id = 0
+		
+		while True:
 			id += 1
-			checkTime = datetime.utcnow()
+			
+			if id < totalEntryCount:
+				errorStreak = 0
+			
+			if errorStreak >= scanBuffer:
+				log('Max 404 streak reached, stopping search.')
+				break
+			
 			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
 			# Check DB for duplicates - does this outside of updateById function to avoid parsing every entry unnecessarily
@@ -262,16 +304,24 @@ def build(listType):
 				log(f'{logPrefix} Skipped (already in DB)')
 				continue
 			
-			# If entry not exist
+			# If entry not exist - Update entry and set variable containing data
 			
-			updateById(listType, id)
+			data = updateById(listType, id)
+			
+			# Count errors
+			if data.get('error') == '404':
+				errorStreak += 1
+			
+			else:
+				errorStreak = 0
+		
 		log('FINISHED BUILDING')
 	except Exception as e:
 		log('ERROR: ' + str(e))
 
 # Maintain Database
 
-def maintainOld(listType):
+def maintain(listType):
 	log('BEGIN MAINTAINING OLD')
 	
 	# Find highest ID in DB
@@ -294,6 +344,8 @@ def maintainOld(listType):
 	''')
 	
 	entries = c.fetchall()
+	
+	# Begin maintaining
 	
 	try:
 		for entry in entries:
@@ -337,60 +389,15 @@ def maintainOld(listType):
 	except Exception as e:
 		log('ERROR: ' + str(e))
 
-def maintainNew(listType):
-	log('BEGIN MAINTAINING NEW')
-	
-	errorCount = 0
-	
-	c.execute(f'''
-		SELECT id, name
-		FROM data
-		WHERE type="{listType}"
-		ORDER BY id DESC
-	''')
-	
-	entries = c.fetchall()
-	
-	# work down from newest 404 until find valid entry
-	for row in entries:
-		if row[1] == '_404_':
-			continue
-		else:
-			id = row[0]
-			break
-	
-	try:
-		while True:
-			if errorCount >= 50:
-				log('Max 404 streak reached, stopping search.')
-				break
-			
-			id += 1
-			
-			# Update entry and set variable containing data
-			
-			data = updateById(listType, id)
-			
-			# Count errors
-			if data.get('error') == '404':
-				errorCount += 1
-			
-			else:
-				errorCount = 0
-		
-		log('MAINTENANCE COMPLETE')
-	except Exception as e:
-		log('ERROR: ' + str(e))
-
 # Commands
 
 if __name__ == '__main__':
 	listTypes = ('anime', 'manga')
+	#listTypes = ('manga', 'anime')
 	
 	for listType in listTypes:
-		#build(listType)
-		maintainNew(listType)
-		maintainOld(listType)
+		build(listType)
+		#maintain(listType)
 
 # Close connection
 
