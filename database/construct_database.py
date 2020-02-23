@@ -242,9 +242,10 @@ def build(listType):
 	
 	totalEntries = estimateEntries(listType)
 	
-	c.execute('''
+	c.execute(f'''
 		SELECT id
 		FROM data
+		WHERE type="{listType}"
 	''')
 	entries = c.fetchall()
 	ids = [id for tuple in entries for id in tuple]
