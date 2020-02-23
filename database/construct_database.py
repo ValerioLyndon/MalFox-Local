@@ -242,6 +242,13 @@ def build(listType):
 	
 	totalEntries = estimateEntries(listType)
 	
+	c.execute('''
+		SELECT id
+		FROM data
+	''')
+	entries = c.fetchall()
+	ids = [id for tuple in entries for id in tuple]
+	
 	try:
 		for id in range(totalEntries):
 			id += 1
@@ -250,20 +257,14 @@ def build(listType):
 			
 			# Check DB for duplicates - does this outside of updateById function to avoid parsing every entry unnecessarily
 			
-			c.execute(f'''
-				SELECT id, name
-				FROM data
-				WHERE type="{listType}"
-				AND id={id}
-			''')
-			entry = c.fetchone()
+			if id in ids:
+				log(f'{logPrefix} Skipped (already in DB)')
+				continue
 			
 			# If entry not exist
 			
-			if entry is None:
-				updateById(listType, id)
-			else:
-				log(f'{logPrefix} Skipped (already in DB)')
+			updateById(listType, id)
+		log('FINISHED BUILDING')
 	except Exception as e:
 		log('ERROR: ' + str(e))
 
@@ -271,6 +272,18 @@ def build(listType):
 
 def maintainOld(listType):
 	log('BEGIN MAINTAINING OLD')
+	
+	# Find highest ID in DB
+	
+	c.execute(f'''
+		SELECT id
+		FROM data
+		WHERE type="{listType}"
+		ORDER BY id DESC
+	''')
+	localEntries = c.fetchone()[0]
+	
+	# Select entries to update
 	
 	c.execute(f'''
 		SELECT type, id, name, image, updated
@@ -300,21 +313,13 @@ def maintainOld(listType):
 			
 			# Check Date
 			
-			c.execute(f'''
-				SELECT id
-				FROM data
-				WHERE type="{listType}"
-				ORDER BY id DESC
-			''')
-			totalEntries = c.fetchone()[0]
-			
 			if currentData['updated'] is not None:
 				#Set minimum & maximum times before a check occurs
 				minDays = 20
 				maxDays = 90
 				
 				#Set weighted formula for priority purposes (older gets checked less, newer sooner)
-				checkWeight = minDays * (totalEntries / currentData['id'])
+				checkWeight = minDays * (localEntries / currentData['id'])
 				if checkWeight > maxDays:
 					checkWeight = maxDays
 				
