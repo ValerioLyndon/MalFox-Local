@@ -8,6 +8,12 @@ Currently, this is used to generate various CSS preset files for use with people
 
 To build a complete database using the default delay, it takes more than a week of running nonstop. To save some time, you can find a version of the database I have built here: [Link](https://www.dropbox.com/s/lbcpk2qwv2y448y/covers.db)
 
+### Info
+
+Built using Python 3. Last confirmed working using Python 3.8.0.
+
+Currently, all files are self-contained and are made to be launched from the file directory.
+
 ### Fair Warning
 
 This program loads MyAnimeList's webpages directly and does not go through their API. This is because, at time of writing, no such API is publicly available.
