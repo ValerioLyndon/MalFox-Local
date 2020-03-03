@@ -298,13 +298,15 @@ def build(listType):
 			
 			logPrefix = f'{listType[:1]}{str(id).zfill(6)}'
 			
-			# Check DB for duplicates - does this outside of updateById function to avoid parsing every entry unnecessarily
+			# Check DB for duplicates and skip if found
+			# Does this outside of updateById function to avoid parsing every entry unnecessarily
+			# Only skips if below the scanBuffer.
 			
-			if id in ids:
+			if id in ids and id < localEntryCount:
 				log(f'{logPrefix} Skipped (already in DB)')
 				continue
 			
-			# If entry not exist - Update entry and set variable containing data
+			# Update entry and set variable containing data
 			
 			data = updateById(listType, id)
 			
@@ -397,7 +399,7 @@ if __name__ == '__main__':
 	
 	for listType in listTypes:
 		build(listType)
-		#maintain(listType)
+		maintain(listType)
 
 # Close connection
 
