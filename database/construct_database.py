@@ -395,12 +395,7 @@ def maintain(listType):
 
 if __name__ == '__main__':
 	listTypes = ('anime', 'manga')
-	#listTypes = ('manga', 'anime')
 	
 	for listType in listTypes:
 		build(listType)
 		maintain(listType)
-
-# Close connection
-
-conn.close()
