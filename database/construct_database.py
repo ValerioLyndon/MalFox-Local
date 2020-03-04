@@ -341,7 +341,53 @@ def maintain():
 		ORDER BY updated ASC
 	''')
 	
-	entries = c.fetchall()
+	entries = []
+	for row in c.fetchall():
+		entries.append([col for col in row])
+	
+	# Sort entries by priority
+	
+	checkTime = datetime.utcnow()
+	
+	for entry in entries:
+		currentData = {
+			'type': entry[0],
+			'id': entry[1],
+			'name': entry[2],
+			'image': entry[3],
+			'updated': entry[4]
+		}
+		
+		if currentData['type'] == 'anime':
+			localEntryCount = localAnimeCount
+		elif currentData['type'] == 'manga':
+			localEntryCount = localMangaCount
+		
+		# Set formula based on database entries
+		weightId = (localEntryCount / currentData['id'])
+		
+		# Set formula based on time since last check - try except is to catch entries with no updated value
+		try:
+			daysSinceLast = abs(datetime.strptime(currentData['updated'], timeFormat) - checkTime).days
+			if daysSinceLast < 0.5:
+				daysSinceLast = 0.5
+		except:
+			daysSinceLast = 365
+		
+		# Uses 120 days as a benchmark for priority
+		weightTime = 120 / (daysSinceLast / 120)
+		
+		# Set caps on values to avoid extreme outliers.
+		if weightId > 3:
+			weightId = 3
+		
+		if daysSinceLast < 0.1:
+			daysSinceLast = 0.1
+		
+		# Combine formulas to find total weight
+		entry.append(weightTime * weightId)
+	
+	entries.sort(key = lambda col: col[5])
 	
 	# Begin maintaining
 	
@@ -355,35 +401,10 @@ def maintain():
 				'updated': entry[4]
 			}
 			
-			checkTime = datetime.utcnow()
-			
 			# Skip blanks
 			
 			if currentData['name'] == '_404_':
 				continue
-			
-			# Check Date
-			
-			if currentData['updated'] is not None:
-				#Set minimum & maximum times before a check occurs
-				minDays = 20
-				maxDays = 90
-				
-				if currentData['type'] == 'anime':
-					localEntryCount = localAnimeCount
-				elif currentData['type'] == 'manga':
-					localEntryCount = localMangaCount
-				
-				#Set weighted formula for priority purposes (older gets checked less, newer sooner)
-				checkWeight = minDays * (localEntryCount / currentData['id'])
-				
-				if checkWeight > maxDays:
-					checkWeight = maxDays
-				
-				sinceLast = abs(datetime.strptime(currentData['updated'], timeFormat) - checkTime).days
-				
-				if sinceLast < checkWeight:
-					continue
 			
 			# Update entry
 			
