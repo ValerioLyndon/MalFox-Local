@@ -68,9 +68,9 @@ def log(msg):
 
 if debug: log('DEBUG ENABLED')
 
-# Estimate total database entries
+# Estimate total MAL database entries
 
-def estimateEntries(listType):
+def estimateTotalEntries(listType):
 	url = 'https://myanimelist.net/' + listType + '.php?o=9&c[0]=a&c[1]=d&cv=2'
 	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 	
@@ -83,6 +83,25 @@ def estimateEntries(listType):
 	
 	estimate = int(recentId)
 	return estimate
+	
+# Return total local database entries.
+# Scans down from top until it finds a valid entry. This is to account for any scan buffer entries.
+
+def checkLocalEntries(listType):
+	c.execute(f'''
+		SELECT id, name
+		FROM data
+		WHERE type="{listType}"
+		ORDER BY id DESC
+	''')
+	
+	entries = c.fetchall()
+	
+	for entry in entries:
+		if entry[1] == '_404_':
+			continue
+		else:
+			return entry[0]
 
 # Returns information from database entries in dictionary format.
 
@@ -248,27 +267,10 @@ def updateById(listType, id):
 def build(listType):
 	log('BEGIN BUILDING')
 	
-	# Set local entry count. Scans down from top until it finds a valid entry. This is to account for any scan buffer entries.
+	# Set total entry counts.
 	
-	c.execute(f'''
-		SELECT id, name
-		FROM data
-		WHERE type="{listType}"
-		ORDER BY id DESC
-	''')
-	
-	entries = c.fetchall()
-	
-	for entry in entries:
-		if entry[1] == '_404_':
-			continue
-		else:
-			localEntryCount = entry[0]
-			break
-	
-	# Set total entry count.
-	
-	totalEntryCount = estimateEntries(listType)
+	localEntryCount = checkLocalEntries(listType)
+	totalEntryCount = estimateTotalEntries(listType)
 	
 	# Set existing IDs in DB
 	
@@ -323,25 +325,19 @@ def build(listType):
 
 # Maintain Database
 
-def maintain(listType):
+def maintain():
 	log('BEGIN MAINTAINING OLD')
 	
-	# Find highest ID in DB
+	# Set total entry count
 	
-	c.execute(f'''
-		SELECT id
-		FROM data
-		WHERE type="{listType}"
-		ORDER BY id DESC
-	''')
-	localEntries = c.fetchone()[0]
+	localAnimeCount = checkLocalEntries('anime')
+	localMangaCount = checkLocalEntries('manga')
 	
 	# Select entries to update
 	
 	c.execute(f'''
 		SELECT type, id, name, image, updated
 		FROM data
-		WHERE type="{listType}"
 		ORDER BY updated ASC
 	''')
 	
@@ -373,8 +369,14 @@ def maintain(listType):
 				minDays = 20
 				maxDays = 90
 				
+				if currentData['type'] == 'anime':
+					localEntryCount = localAnimeCount
+				elif currentData['type'] == 'manga':
+					localEntryCount = localMangaCount
+				
 				#Set weighted formula for priority purposes (older gets checked less, newer sooner)
-				checkWeight = minDays * (localEntries / currentData['id'])
+				checkWeight = minDays * (localEntryCount / currentData['id'])
+				
 				if checkWeight > maxDays:
 					checkWeight = maxDays
 				
@@ -394,8 +396,6 @@ def maintain(listType):
 # Commands
 
 if __name__ == '__main__':
-	listTypes = ('anime', 'manga')
-	
-	for listType in listTypes:
-		build(listType)
-		maintain(listType)
+	build('anime')
+	build('manga')
+	maintain()
