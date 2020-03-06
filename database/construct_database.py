@@ -163,7 +163,7 @@ def parseEntry(listType, id):
 		elif image.get('src') is not None:
 			data['image'] = image.get('src')
 	
-	if debug: log(data)
+	if debug: print('[DEBUG] Unfiltered new:', data)
 	return data
 
 # Commits changes for a single entry to database.
@@ -269,7 +269,7 @@ def updateById(listType, id):
 	
 	# Commit Changes
 	
-	if debug: print(newData)
+	if debug: print('[DEBUG] Filtered new:', newData)
 	
 	formattedError = ', '.join(str(x) for x in newData['error'])
 	
@@ -366,6 +366,8 @@ def maintain():
 	
 	# Sort entries by priority
 	
+	print('Sorting database, this may take a second...')
+	
 	checkTime = datetime.utcnow()
 	
 	for entry in entries:
@@ -382,6 +384,8 @@ def maintain():
 			localEntryCount = localAnimeCount
 		elif currentData['type'] == 'manga':
 			localEntryCount = localMangaCount
+		
+		# Calculate check weight - lower weight = checks sooner
 		
 		# Set formula based on database entries
 		weightId = (localEntryCount / currentData['id'])
@@ -405,7 +409,17 @@ def maintain():
 			daysSinceLast = 0.1
 		
 		# Combine formulas to find total weight
-		entry.append(weightTime * weightId)
+		
+		weight = weightTime * weightId
+		
+		# Lower weight if 404
+		
+		if currentData['name'] == '_404_':
+			weight = weight * 2
+		
+		# Adjust weight data
+		if debug: print('[DEBUG] Weight:', weight)
+		entry.append(weight)
 	
 	entries.sort(key = lambda col: col[6])
 	
@@ -413,6 +427,8 @@ def maintain():
 	
 	try:
 		for entry in entries:
+			if debug: print('[DEBUG] Current:', entry)
+			
 			currentData = {
 				'type': entry[0],
 				'id': entry[1],
