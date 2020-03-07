@@ -38,17 +38,17 @@ def createLocal(listType):
 		'more': '#more{id}{{background-image:url({image})}}\n'
 	}
 	
-	c.execute('''
+	c.execute(f'''
 		SELECT id, name, image
 		FROM data
-		WHERE type="%s"
+		WHERE type="{listType}"
 		ORDER BY id ASC
-	''' % listType)
+	''')
 	database = c.fetchall()
 	
 	for preset in presets:
-		fileName = subdir + '/%slist_%s.css' % (listType, preset)
-		file = open(fileName,"w+")
+		fileName = subdir + f'/{listType}list_{preset}.css'
+		file = open(fileName,'w+')
 		
 		for item in database:
 			id = item[0]
@@ -56,7 +56,7 @@ def createLocal(listType):
 			image = item[2]
 			
 			#Skip 404
-			if name == '_404_' or image == '_404_':
+			if name == '_404_':
 				continue
 			
 			#Set Image to placeholder if not valid URL
@@ -69,7 +69,7 @@ def createLocal(listType):
 		
 		#End
 		file.close()
-		print('Created %s' % preset)
+		print(f'Created {preset}')
 
 createLocal('anime')
 createLocal('manga')
