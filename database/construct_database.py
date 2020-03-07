@@ -84,13 +84,20 @@ if debug: log('DEBUG ENABLED')
 def estimateTotalEntries(listType):
 	print(f'Sending web request - waiting {delay} seconds to avoid spam protection...')
 	sleep(delay)
-	url = 'https://myanimelist.net/' + listType + '.php?o=9&c[0]=a&c[1]=d&cv=2'
+	url = 'https://myanimelist.net/_' + listType + '.php?o=9&c[0]=a&c[1]=d&cv=2'
 	parsed = BeautifulSoup(requests.get(url).text, 'html.parser')
 	
 	recent = parsed.find('a', class_='hoverinfo_trigger')
-	recentId = recent['href'].split('/')[4]
+	if recent is not None:
+		recentId = recent['href'].split('/')[4]
+		estimate = int(recentId)
+	elif listType == 'anime':
+		estimate = 40000
+	elif listType == 'manga':
+		estimate = 125000
+	else:
+		estimate = 0
 	
-	estimate = int(recentId)
 	return estimate
 	
 # Return total local database entries.
@@ -228,7 +235,7 @@ def updateById(listType, id):
 			# Check for previous errors and add their counts together
 			daysSinceLast = abs(formatDate(oldData['updated']) - formatDate(newData['updated'])).days
 			
-			if daysSinceLast > 3 and newData['error'][0] == oldData['error'][0]:
+			if daysSinceLast > 7 and newData['error'][0] == oldData['error'][0]:
 				newData['error'][1] = int(newData['error'][1]) + int(oldData['error'][1])
 			
 			# Sets data as 404 if entry has 404'd 5 times
