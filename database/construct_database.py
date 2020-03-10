@@ -392,43 +392,39 @@ def maintain():
 		elif currentData['type'] == 'manga':
 			localEntryCount = localMangaCount
 		
-		# Calculate check weight - lower weight = checks sooner
+		# Calculate check weight - higher weight = checks sooner
 		
 		# Set formula based on database entries
-		weightId = (localEntryCount / currentData['id'])
+		weightId = currentData['id'] / localEntryCount
+		if weightId < 0.05:
+			weightId = 0.05
+		if weightId > 1:
+			weightId = 1
 		
-		# Set formula based on time since last check - try except is to catch entries with no updated value
-		try:
-			daysSinceLast = abs(datetime.strptime(currentData['updated'], timeFormat) - checkTime).days
-			if daysSinceLast < 0.5:
-				daysSinceLast = 0.5
-		except:
-			daysSinceLast = 365
+		# Set formula based on time since last check
+		daysSinceLast = abs(datetime.strptime(currentData['updated'], timeFormat) - checkTime).days
+		if daysSinceLast < 0.5:
+			daysSinceLast = 0.5
 		
-		# Uses 120 days as a benchmark for priority
-		weightTime = 120 / (daysSinceLast / 120)
-		
-		# Set caps on values to avoid extreme outliers.
-		if weightId > 3:
-			weightId = 3
-		
-		if daysSinceLast < 0.1:
-			daysSinceLast = 0.1
+		weightTime = daysSinceLast / 100
 		
 		# Combine formulas to find total weight
 		
-		weight = weightTime * weightId
+		weight = weightId + (weightTime * 0.7)
 		
 		# Lower weight if 404
 		
 		if currentData['name'] == '_404_':
-			weight = weight * 2
+			weight = weight * 0.65
 		
 		# Adjust weight data
-		if debug: print('[DEBUG] Weight:', weight)
 		entry.append(weight)
 	
-	entries.sort(key = lambda col: col[6])
+	# Sorts descending
+	entries.sort(key = lambda col: col[6], reverse=True)
+	if debug:
+		for e in entries:
+			log(f'[DEBUG] {e[0][:1]}{str(e[1]).zfill(6)} {e[4][:10]} weight: {e[6]}')
 	
 	# Begin updating
 	
