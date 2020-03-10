@@ -443,7 +443,8 @@ def maintain():
 			
 			# Skip 404s
 			
-			if len(currentData['error']) > 1 and int(currentData['error'][1]) > 4:
+			if len(currentData['error']) > 1 and int(currentData['error'][1]) > 3:
+				log(f'{currentData["type"][:1]}{str(currentData["id"]).zfill(6)} Skipped (maxed out 404 counter)')
 				continue
 			
 			# Update entry
