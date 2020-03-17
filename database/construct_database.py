@@ -251,7 +251,7 @@ def updateById(listType, id):
 				
 				else:
 					# Generic error handling
-					logSuffix = f'error: {newData["error"][0]}'
+					logSuffix = f'nothing updated ({newData["error"][0]} error)'
 		
 		else:
 			updated = []
@@ -409,13 +409,15 @@ def maintain():
 		weightTime = daysSinceLast / 100
 		
 		# Combine formulas to find total weight
-		
 		weight = weightId + (weightTime * 0.7)
 		
 		# Lower weight if 404
-		
 		if currentData['name'] == '_404_':
 			weight = weight * 0.65
+		
+		# Prioritize unknown errors above all
+		if currentData['error'][0] == 'unknown':
+			weight = weight * 1000
 		
 		# Adjust weight data
 		entry.append(weight)
