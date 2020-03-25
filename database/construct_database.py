@@ -409,11 +409,15 @@ def maintain():
 		weightTime = daysSinceLast / 100
 		
 		# Combine formulas to find total weight
-		weight = weightId + (weightTime * 0.7)
+		weight = weightId + (weightTime * 0.9)
 		
 		# Lower weight if 404
 		if currentData['name'] == '_404_':
 			weight = weight * 0.65
+		
+		# Lower weight if manga
+		if currentData['type'] == 'manga':
+			weight = weight * 0.9
 		
 		# Prioritize unknown errors above all
 		if currentData['error'][0] == 'unknown':
